@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Instance } from '@/lib/types'
+import { getActivityLogsForInstance, ActivityLogEntry } from '@/lib/activity-log'
 import { ProgressTimeline, TimelineStep } from '@/components/progress-timeline'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ export default function ServerProgressPage() {
   const [loading, setLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(true)
   const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string }>({ open: false, title: 'Error', message: '' })
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([])
 
   const checkAuth = useCallback(async () => {
     try {
@@ -76,6 +78,16 @@ export default function ServerProgressPage() {
     }
   }, [id])
 
+  const loadActivityLogs = useCallback(async () => {
+    try {
+      if (!id) return
+      const logs = await getActivityLogsForInstance(id)
+      setActivityLogs(logs)
+    } catch (error) {
+      console.error('Error loading activity logs:', error)
+    }
+  }, [id])
+
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
@@ -83,15 +95,17 @@ export default function ServerProgressPage() {
   useEffect(() => {
     if (id && !authLoading) {
       fetchServerDetails()
+      loadActivityLogs()
       // Only poll if we have an instance (don't poll if server not found)
       const interval = setInterval(() => {
         if (instance) {
           fetchServerDetails()
+          loadActivityLogs()
         }
       }, 2000)
       return () => clearInterval(interval)
     }
-  }, [id, authLoading, instance, fetchServerDetails])
+  }, [id, authLoading, instance, fetchServerDetails, loadActivityLogs])
 
   const getTimelineSteps = (): TimelineStep[] => {
     if (!instance) return []
@@ -288,6 +302,50 @@ export default function ServerProgressPage() {
                   <p className="text-sm text-yellow-700 dark:text-yellow-300">
                     Click &quot;Retry Script&quot; above to attempt VM creation again, or check the Environment Status on the dashboard to ensure VirtualBox is properly configured.
                   </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Activity Log</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {activityLogs.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No activity has been recorded yet for this server.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto text-sm">
+                  {activityLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="flex justify-between items-start p-2 rounded border bg-muted/40"
+                    >
+                      <div>
+                        <div className="font-medium">{log.title}</div>
+                        {log.description && (
+                          <div className="text-muted-foreground text-xs mt-0.5">
+                            {log.description}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-muted-foreground mt-1">
+                          {new Date(log.createdAt).toLocaleString()} • {log.type.replace('_', ' ')}
+                        </div>
+                      </div>
+                      <span
+                        className={
+                          'ml-2 px-2 py-0.5 rounded text-[10px] font-semibold ' +
+                          (log.status === 'success'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                            : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300')
+                        }
+                      >
+                        {log.status === 'success' ? 'SUCCESS' : 'ERROR'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>

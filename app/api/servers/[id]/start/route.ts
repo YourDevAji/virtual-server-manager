@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { verifyAuth } from '@/lib/supabase/api-client'
+import { createApiClient } from '@/lib/supabase/api-client'
 import { executeScript } from '@/lib/scripts/executor'
 
 export async function POST(
@@ -10,15 +10,13 @@ export async function POST(
   try {
     const { id } = await params
 
-    // Verify authentication
-    const { supabase, user } = await verifyAuth(request)
+    const { supabase } = createApiClient(request)
 
-    // Get instance (verify ownership)
+    // Get instance
     const { data: instance, error: instanceError } = await supabase
       .from('instances')
       .select('name, os, cpu, ram, storage, user_id, script_status')
       .eq('id', id)
-      .eq('user_id', user.id)
       .single()
 
     if (instanceError || !instance) {

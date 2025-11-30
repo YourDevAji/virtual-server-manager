@@ -86,7 +86,7 @@ export default function Dashboard() {
   const handleAction = async (action: 'start' | 'stop' | 'delete', instanceId: string) => {
     setActionLoading(instanceId)
     try {
-      // Get the session token
+      // Get the session so we can forward the token to the API
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         throw new Error('Not authenticated')
@@ -322,7 +322,11 @@ export default function Dashboard() {
                           onClick={() => handleAction('start', instance.id)}
                           disabled={actionLoading === instance.id}
                         >
-                          <Play className="h-3 w-3" />
+                          {actionLoading === instance.id ? (
+                            <span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                          ) : (
+                            <Play className="h-3 w-3" />
+                          )}
                         </Button>
                       ) : (
                         <Button
@@ -331,7 +335,11 @@ export default function Dashboard() {
                           onClick={() => setStopDialog({ open: true, instance })}
                           disabled={actionLoading === instance.id}
                         >
-                          <Square className="h-3 w-3" />
+                          {actionLoading === instance.id ? (
+                            <span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                          ) : (
+                            <Square className="h-3 w-3" />
+                          )}
                         </Button>
                       )}
                       <Button
@@ -340,7 +348,11 @@ export default function Dashboard() {
                         onClick={() => setDeleteDialog({ open: true, instance })}
                         disabled={actionLoading === instance.id}
                       >
-                        <Trash2 className="h-3 w-3" />
+                        {actionLoading === instance.id ? (
+                          <span className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
                       </Button>
                     </div>
                   </td>

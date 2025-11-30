@@ -9,7 +9,7 @@ async function runCommand(command: string, options?: NodeExecOptions): Promise<s
       if (err) return reject(err)
       try {
         resolve(stdoutToString(stdout))
-      } catch (e) {
+      } catch {
         // Fallback: stringify whatever stdout is
         resolve(String(stdout ?? ''))
       }

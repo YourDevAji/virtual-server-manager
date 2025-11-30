@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
+import { addActivityLog, getActivityLogsForInstance, ActivityLogEntry, ActivityType } from '@/lib/activity-log'
 import { Instance, Service, VMUser } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -29,7 +30,11 @@ export default function ServerDetailsPage() {
   const [services, setServices] = useState<Service[]>([])
   const [users, setUsers] = useState<VMUser[]>([])
   const [loading, setLoading] = useState(true)
-  const [actionLoading, setActionLoading] = useState(false)
+  const [startLoading, setStartLoading] = useState(false)
+  const [stopLoading, setStopLoading] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [installLoading, setInstallLoading] = useState(false)
+  const [addUserLoading, setAddUserLoading] = useState(false)
   const [installServiceDialog, setInstallServiceDialog] = useState(false)
   const [addUserDialog, setAddUserDialog] = useState(false)
   const [newService, setNewService] = useState('')
@@ -38,6 +43,25 @@ export default function ServerDetailsPage() {
   const [deleteDialog, setDeleteDialog] = useState(false)
   const [stopDialog, setStopDialog] = useState(false)
   const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string; actionLabel?: string; onAction?: () => void }>({ open: false, title: 'Error', message: '' })
+  const [metrics, setMetrics] = useState<{ cpu: number; ram_used: number; ram_total: number } | null>(null)
+  const [metricsLoading, setMetricsLoading] = useState(false)
+  const [metricsError, setMetricsError] = useState<string | null>(null)
+  const [cloneDialog, setCloneDialog] = useState(false)
+  const [cloneName, setCloneName] = useState('')
+  const [snapshotsDialog, setSnapshotsDialog] = useState(false)
+  const [snapshotName, setSnapshotName] = useState('')
+  const [snapshotRestoreName, setSnapshotRestoreName] = useState('')
+  const [cloneLoading, setCloneLoading] = useState(false)
+  const [snapshotLoading, setSnapshotLoading] = useState(false)
+  const [snapshotLogs, setSnapshotLogs] = useState<{
+    id: number
+    timestamp: string
+    action: 'create' | 'restore'
+    name: string
+    success: boolean
+    message?: string
+  }[]>([])
+  const [, setActivityLogs] = useState<ActivityLogEntry[]>([])
 
   const checkAuth = useCallback(async () => {
     try {
@@ -82,6 +106,53 @@ export default function ServerDetailsPage() {
     }
   }, [id])
 
+  const loadActivityLogs = useCallback(async () => {
+    try {
+      if (!id) return
+      const logs = await getActivityLogsForInstance(id)
+      setActivityLogs(logs)
+    } catch (error) {
+      console.error('Error loading activity logs:', error)
+    }
+  }, [id])
+
+  const fetchMetrics = useCallback(async () => {
+    try {
+      if (!id) return
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      if (!metrics) {
+        setMetricsLoading(true)
+      }
+
+      const response = await fetch(`/api/servers/${id}/metrics`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        const message = errorData.error || errorData.message || 'Failed to fetch metrics'
+        setMetricsError(message)
+        return
+      }
+
+      const data = await response.json()
+      if (data && data.metrics) {
+        setMetrics(data.metrics)
+        setMetricsError(null)
+      }
+    } catch (error) {
+      console.error('Error fetching metrics:', error)
+      const message = error instanceof Error ? error.message : 'Failed to fetch metrics'
+      setMetricsError(message)
+    } finally {
+      setMetricsLoading(false)
+    }
+  }, [id, metrics])
+
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
@@ -89,14 +160,57 @@ export default function ServerDetailsPage() {
   useEffect(() => {
     if (id && !authLoading) {
       fetchServerDetails()
+      loadActivityLogs()
     }
-  }, [id, authLoading, fetchServerDetails])
+  }, [id, authLoading, fetchServerDetails, loadActivityLogs])
+
+  const appendActivityLog = async (type: ActivityType, title: string, options?: { description?: string; status?: 'success' | 'error' }) => {
+    try {
+      const entry: ActivityLogEntry = {
+        id: Date.now(),
+        instanceId: id,
+        type,
+        title,
+        description: options?.description,
+        status: options?.status || 'success',
+        createdAt: new Date().toISOString(),
+      }
+      setActivityLogs(prev => [entry, ...prev])
+      await addActivityLog(entry)
+    } catch (error) {
+      console.error('Failed to append activity log:', error)
+    }
+  }
+
+  useEffect(() => {
+    if (!instance || instance.status !== 'running') {
+      return
+    }
+
+    fetchMetrics()
+    const interval = setInterval(fetchMetrics, 3000)
+
+    return () => {
+      clearInterval(interval)
+    }
+  }, [instance, fetchMetrics])
 
   const handleAction = async (action: 'start' | 'stop' | 'delete') => {
-    setActionLoading(true)
+    if (action === 'start') setStartLoading(true)
+    if (action === 'stop') setStopLoading(true)
+    if (action === 'delete') setDeleteLoading(true)
     try {
+      // Get the session so we can forward the token to the API
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
       const response = await fetch(`/api/servers/${id}/${action}`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
       })
 
       const data = await response.json()
@@ -144,14 +258,17 @@ export default function ServerDetailsPage() {
         toast.success('Server started successfully', {
           description: data.message || 'The server is now running'
         })
+        appendActivityLog('start', 'Server started', { description: data.message, status: 'success' })
       } else if (action === 'stop') {
         toast.success('Server stopped successfully', {
           description: data.message || 'The server has been stopped'
         })
+        appendActivityLog('stop', 'Server stopped', { description: data.message, status: 'success' })
       } else if (action === 'delete') {
         toast.success('Server deleted successfully', {
           description: data.message || 'The server has been deleted'
         })
+        appendActivityLog('delete', 'Server deleted', { description: data.message, status: 'success' })
       }
 
       if (action === 'delete') {
@@ -171,19 +288,235 @@ export default function ServerDetailsPage() {
         message: errorMessage,
         details: error instanceof Error ? error.stack : undefined
       })
+
+      appendActivityLog(
+        action === 'start' ? 'start' : action === 'stop' ? 'stop' : 'delete',
+        `Failed to ${action} server`,
+        { description: errorMessage, status: 'error' },
+      )
       
       if (action === 'stop') {
         setStopDialog(false)
       }
     } finally {
-      setActionLoading(false)
+      if (action === 'start') setStartLoading(false)
+      if (action === 'stop') setStopLoading(false)
+      if (action === 'delete') setDeleteLoading(false)
+    }
+  }
+
+  const handleClone = async () => {
+    setCloneLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
+      const response = await fetch(`/api/servers/${id}/clone`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ name: cloneName || undefined }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        const errorMessage = data.error || data.message || 'Failed to clone server'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to clone server',
+          message: errorMessage,
+          details: data.error || data.message,
+        })
+        appendActivityLog('clone', 'Failed to clone server', { description: errorMessage, status: 'error' })
+        return
+      }
+
+      toast.success('Server cloned successfully', {
+        description: 'Your cloned server is being prepared.',
+      })
+
+      appendActivityLog('clone', 'Server cloned', { status: 'success' })
+
+      setCloneDialog(false)
+      setCloneName('')
+
+      if (data.redirectTo) {
+        router.push(data.redirectTo)
+      } else if (data.id) {
+        router.push(`/servers/${data.id}`)
+      }
+    } catch (error) {
+      console.error('Error cloning server:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to clone server',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined,
+      })
+    } finally {
+      setCloneLoading(false)
+    }
+  }
+
+  const handleCreateSnapshot = async () => {
+    if (!snapshotName) return
+
+    setSnapshotLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
+      const response = await fetch(`/api/servers/${id}/snapshots/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ name: snapshotName }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        const errorMessage = data.error || data.message || 'Failed to create snapshot'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to create snapshot',
+          message: errorMessage,
+          details: data.error || data.message,
+        })
+        setSnapshotLogs(prev => [
+          {
+            id: Date.now(),
+            timestamp: new Date().toISOString(),
+            action: 'create',
+            name: snapshotName,
+            success: false,
+            message: errorMessage,
+          },
+          ...prev,
+        ])
+        appendActivityLog('snapshot_create', 'Failed to create snapshot', { description: errorMessage, status: 'error' })
+        return
+      }
+
+      toast.success('Snapshot created successfully', {
+        description: data.name || snapshotName,
+      })
+
+      setSnapshotLogs(prev => [
+        {
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          action: 'create',
+          name: data.name || snapshotName,
+          success: true,
+        },
+        ...prev,
+      ])
+
+      appendActivityLog('snapshot_create', 'Snapshot created', { description: data.name || snapshotName, status: 'success' })
+
+      setSnapshotName('')
+    } catch (error) {
+      console.error('Error creating snapshot:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to create snapshot',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined,
+      })
+    } finally {
+      setSnapshotLoading(false)
+    }
+  }
+
+  const handleRestoreSnapshot = async () => {
+    if (!snapshotRestoreName) return
+
+    setSnapshotLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
+      const response = await fetch(`/api/servers/${id}/snapshots/restore`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ name: snapshotRestoreName }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        const errorMessage = data.error || data.message || 'Failed to restore snapshot'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to restore snapshot',
+          message: errorMessage,
+          details: data.error || data.message,
+        })
+        setSnapshotLogs(prev => [
+          {
+            id: Date.now(),
+            timestamp: new Date().toISOString(),
+            action: 'restore',
+            name: snapshotRestoreName,
+            success: false,
+            message: errorMessage,
+          },
+          ...prev,
+        ])
+        return
+      }
+
+      toast.success('Snapshot restored successfully', {
+        description: data.name || snapshotRestoreName,
+      })
+
+      setSnapshotLogs(prev => [
+        {
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          action: 'restore',
+          name: data.name || snapshotRestoreName,
+          success: true,
+        },
+        ...prev,
+      ])
+
+      await fetchServerDetails()
+    } catch (error) {
+      console.error('Error restoring snapshot:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to restore snapshot',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined,
+      })
+    } finally {
+      setSnapshotLoading(false)
     }
   }
 
   const handleInstallService = async () => {
     if (!newService) return
 
-    setActionLoading(true)
+    setInstallLoading(true)
     try {
       // Get the session token
       const { data: { session } } = await supabase.auth.getSession()
@@ -210,12 +543,15 @@ export default function ServerDetailsPage() {
           message: errorMessage,
           details: data.error || data.message
         })
+        appendActivityLog('install_service', 'Failed to install service', { description: errorMessage, status: 'error' })
         return
       }
 
       toast.success('Service installed successfully', {
         description: data.message || `${newService} has been installed`
       })
+
+      appendActivityLog('install_service', 'Service installed', { description: newService, status: 'success' })
 
       setInstallServiceDialog(false)
       setNewService('')
@@ -230,14 +566,14 @@ export default function ServerDetailsPage() {
         details: error instanceof Error ? error.stack : undefined
       })
     } finally {
-      setActionLoading(false)
+      setInstallLoading(false)
     }
   }
 
   const handleAddUser = async () => {
     if (!newUser.username || !newUser.password) return
 
-    setActionLoading(true)
+    setAddUserLoading(true)
     try {
       // Get the session token
       const { data: { session } } = await supabase.auth.getSession()
@@ -264,12 +600,15 @@ export default function ServerDetailsPage() {
           message: errorMessage,
           details: data.error || data.message
         })
+        appendActivityLog('add_user', 'Failed to add user', { description: errorMessage, status: 'error' })
         return
       }
 
       toast.success('User created successfully', {
         description: data.message || `User ${newUser.username} has been created`
       })
+
+      appendActivityLog('add_user', 'User added', { description: newUser.username, status: 'success' })
 
       setAddUserDialog(false)
       setNewUser({ username: '', password: '', sudo: false })
@@ -284,7 +623,7 @@ export default function ServerDetailsPage() {
         details: error instanceof Error ? error.stack : undefined
       })
     } finally {
-      setActionLoading(false)
+      setAddUserLoading(false)
     }
   }
 
@@ -350,30 +689,79 @@ export default function ServerDetailsPage() {
           {instance.status === 'stopped' ? (
             <Button
               onClick={() => handleAction('start')}
-              disabled={actionLoading}
+              disabled={startLoading}
             >
-              <Play className="mr-2 h-4 w-4" />
-              Start
+              {startLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span>Starting...</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Play className="h-4 w-4" />
+                  <span>Start</span>
+                </span>
+              )}
             </Button>
           ) : (
             <Button
               variant="outline"
               onClick={() => setStopDialog(true)}
-              disabled={actionLoading}
+              disabled={stopLoading}
             >
-              <Square className="mr-2 h-4 w-4" />
-              Stop
+              {stopLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span>Stopping...</span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Square className="h-4 w-4" />
+                  <span>Stop</span>
+                </span>
+              )}
             </Button>
           )}
           <Button
             variant="destructive"
             onClick={() => setDeleteDialog(true)}
-            disabled={actionLoading}
+            disabled={deleteLoading}
           >
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
+            {deleteLoading ? (
+              <span className="flex items-center gap-2">
+                <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                <span>Deleting...</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Trash2 className="h-4 w-4" />
+                <span>Delete</span>
+              </span>
+            )}
           </Button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-6">
+        <Link href={`/servers/${id}/progress`}>
+          <Button variant="outline" size="sm">
+            View Logs
+          </Button>
+        </Link>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCloneDialog(true)}
+        >
+          Clone Server
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setSnapshotsDialog(true)}
+        >
+          Snapshots
+        </Button>
       </div>
 
       {/* Script Status Alert */}
@@ -428,7 +816,7 @@ export default function ServerDetailsPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardHeader>
             <CardTitle>Server Information</CardTitle>
@@ -464,6 +852,37 @@ export default function ServerDetailsPage() {
                   <strong>Script Error:</strong> {instance.script_error}
                 </p>
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {instance.status !== 'running' ? (
+              <p className="text-sm text-muted-foreground">
+                Metrics are available when the server is running.
+              </p>
+            ) : metricsError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{metricsError}</p>
+            ) : !metrics || metricsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading metrics...</p>
+            ) : (
+              <>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-muted-foreground">CPU Usage</span>
+                  <span className="font-semibold">{metrics.cpu.toFixed(1)}%</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-muted-foreground">RAM Usage</span>
+                  <span className="font-semibold">
+                    {metrics.ram_used} MB
+                    {metrics.ram_total > 0 && ` / ${metrics.ram_total} MB`}
+                  </span>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -562,10 +981,143 @@ export default function ServerDetailsPage() {
             <Button variant="outline" onClick={() => setInstallServiceDialog(false)}>
               Cancel
             </Button>
-            <Button onClick={handleInstallService} disabled={!newService || actionLoading}>
-              Install
+            <Button onClick={handleInstallService} disabled={!newService || installLoading}>
+              {installLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span>Installing...</span>
+                </span>
+              ) : (
+                'Install'
+              )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cloneDialog} onOpenChange={setCloneDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clone Server</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="clone-name">Clone Name (optional)</Label>
+              <Input
+                id="clone-name"
+                value={cloneName}
+                onChange={(e) => setCloneName(e.target.value)}
+                placeholder={`${instance.name}-copy-1`}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloneDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleClone} disabled={cloneLoading}>
+              {cloneLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span>Cloning...</span>
+                </span>
+              ) : (
+                'Clone Server'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={snapshotsDialog} onOpenChange={setSnapshotsDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Snapshots</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="snapshot-name">Create Snapshot</Label>
+              <Input
+                id="snapshot-name"
+                value={snapshotName}
+                onChange={(e) => setSnapshotName(e.target.value)}
+                placeholder="snapshot-name"
+              />
+              <Button
+                onClick={handleCreateSnapshot}
+                disabled={!snapshotName || snapshotLoading}
+              >
+                {snapshotLoading ? (
+                  <span className="flex items-center gap-2">
+                    <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    <span>Creating...</span>
+                  </span>
+                ) : (
+                  'Create Snapshot'
+                )}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="snapshot-restore-name">Restore Snapshot</Label>
+              <Input
+                id="snapshot-restore-name"
+                value={snapshotRestoreName}
+                onChange={(e) => setSnapshotRestoreName(e.target.value)}
+                placeholder="snapshot-name"
+              />
+              <Button
+                onClick={handleRestoreSnapshot}
+                disabled={!snapshotRestoreName || snapshotLoading}
+              >
+                {snapshotLoading ? (
+                  <span className="flex items-center gap-2">
+                    <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    <span>Restoring...</span>
+                  </span>
+                ) : (
+                  'Restore Snapshot'
+                )}
+              </Button>
+            </div>
+            <div className="pt-4 border-t mt-4">
+              <h3 className="text-sm font-semibold mb-2">Snapshot Activity</h3>
+              {snapshotLogs.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No snapshot activity yet.</p>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {snapshotLogs.map(log => (
+                    <div
+                      key={log.id}
+                      className="flex justify-between items-start text-xs p-2 rounded border bg-muted/40"
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {log.action === 'create' ? 'Created' : 'Restored'} snapshot
+                          <span className="ml-1 font-semibold">{log.name}</span>
+                        </div>
+                        <div className="text-muted-foreground">
+                          {new Date(log.timestamp).toLocaleString()}
+                        </div>
+                        {log.message && (
+                          <div className="text-red-500 mt-1">{log.message}</div>
+                        )}
+                      </div>
+                      <span
+                        className={
+                          'ml-2 px-2 py-0.5 rounded text-[10px] font-semibold ' +
+                          (log.success
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                            : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300')
+                        }
+                      >
+                        {log.success ? 'SUCCESS' : 'FAILED'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -609,9 +1161,16 @@ export default function ServerDetailsPage() {
             </Button>
             <Button
               onClick={handleAddUser}
-              disabled={!newUser.username || !newUser.password || actionLoading}
+              disabled={!newUser.username || !newUser.password || addUserLoading}
             >
-              Add User
+              {addUserLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span>Adding...</span>
+                </span>
+              ) : (
+                'Add User'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -633,7 +1192,7 @@ export default function ServerDetailsPage() {
             <Button
               variant="destructive"
               onClick={() => handleAction('delete')}
-              disabled={actionLoading}
+              disabled={deleteLoading}
             >
               Delete
             </Button>
@@ -657,9 +1216,16 @@ export default function ServerDetailsPage() {
             <Button
               variant="outline"
               onClick={() => handleAction('stop')}
-              disabled={actionLoading}
+              disabled={stopLoading}
             >
-              Stop Server
+              {stopLoading ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  <span>Stopping...</span>
+                </span>
+              ) : (
+                'Stop Server'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

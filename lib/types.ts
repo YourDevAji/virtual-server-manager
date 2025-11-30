@@ -30,7 +30,7 @@ export interface VMUser {
 
 export interface CreateServerData {
   name: string
-  os: 'Ubuntu' | 'Debian' | 'CentOS'
+  os: 'Ubuntu' | 'Debian' | 'CentOS' | 'Windows'
   cpu: number
   ram: number
   storage: number

@@ -192,12 +192,13 @@ export default function CreateServerPage() {
               <Select
                 id="os"
                 value={formData.os}
-                onChange={(e) => setFormData(prev => ({ ...prev, os: e.target.value as 'Ubuntu' | 'Debian' | 'CentOS' }))}
+                onChange={(e) => setFormData(prev => ({ ...prev, os: e.target.value as 'Ubuntu' | 'Debian' | 'CentOS' | 'Windows' }))}
                 required
               >
                 <option value="Ubuntu">Ubuntu</option>
                 <option value="Debian">Debian</option>
                 <option value="CentOS">CentOS</option>
+                <option value="Windows">Windows</option>
               </Select>
             </div>
 
@@ -249,7 +250,7 @@ export default function CreateServerPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {['Nginx', 'MySQL', 'Docker'].map((service) => (
+              {['Nginx', 'Apache', 'MySQL', 'PostgreSQL', 'Docker'].map((service) => (
                 <div key={service} className="flex items-center space-x-2">
                   <Checkbox
                     id={service}
@@ -333,7 +334,14 @@ export default function CreateServerPage() {
 
         <div className="flex gap-4">
           <Button type="submit" disabled={loading}>
-            {loading ? 'Creating...' : 'Create Server'}
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                <span>Creating...</span>
+              </span>
+            ) : (
+              'Create Server'
+            )}
           </Button>
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Cancel

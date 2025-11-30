@@ -9,8 +9,16 @@ export async function POST(
 ) {
   try {
     const { id } = await params
-    const body = await request.json()
-    const { username, password, sudo } = body
+    const body = await request.json().catch(() => null as unknown)
+
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json(
+        { error: 'Invalid request body' },
+        { status: 400 }
+      )
+    }
+
+    const { username, password, sudo } = body as { username?: string; password?: string; sudo?: boolean }
 
     if (!username || !password) {
       return NextResponse.json(
