@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { Instance } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { ErrorDialog } from '@/components/error-dialog'
 import { ThemeProvider } from '@/components/theme-provider'
@@ -16,23 +16,20 @@ import { format } from 'date-fns'
 import { Play, Square, Trash2, Plus, LogOut } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
+import type { User } from '@supabase/supabase-js'
 
 export default function Dashboard() {
   const router = useRouter()
   const [instances, setInstances] = useState<Instance[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null) // explicit User type
   const [authLoading, setAuthLoading] = useState(true)
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; instance: Instance | null }>({ open: false, instance: null })
   const [stopDialog, setStopDialog] = useState<{ open: boolean; instance: Instance | null }>({ open: false, instance: null })
   const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string; actionLabel?: string; onAction?: () => void }>({ open: false, title: 'Error', message: '' })
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
-
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user }, error } = await supabase.auth.getUser()
       if (error || !user) {
@@ -42,11 +39,15 @@ export default function Dashboard() {
       setUser(user)
       setAuthLoading(false)
       fetchInstances()
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Auth error:', error)
       router.push('/')
     }
-  }
+  }, [router])
+
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
 
   const fetchInstances = async () => {
     try {
@@ -82,7 +83,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleAction = async (action: 'start' | 'stop' | 'delete', instanceId: string, instanceName: string) => {
+  const handleAction = async (action: 'start' | 'stop' | 'delete', instanceId: string) => {
     setActionLoading(instanceId)
     try {
       // Get the session token
@@ -318,7 +319,7 @@ export default function Dashboard() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleAction('start', instance.id, instance.name)}
+                          onClick={() => handleAction('start', instance.id)}
                           disabled={actionLoading === instance.id}
                         >
                           <Play className="h-3 w-3" />
@@ -367,7 +368,7 @@ export default function Dashboard() {
               variant="destructive"
               onClick={() => {
                 if (deleteDialog.instance) {
-                  handleAction('delete', deleteDialog.instance.id, deleteDialog.instance.name)
+                  handleAction('delete', deleteDialog.instance.id)
                 }
               }}
               disabled={actionLoading === deleteDialog.instance?.id}
@@ -395,7 +396,7 @@ export default function Dashboard() {
               variant="outline"
               onClick={() => {
                 if (stopDialog.instance) {
-                  handleAction('stop', stopDialog.instance.id, stopDialog.instance.name)
+                  handleAction('stop', stopDialog.instance.id)
                 }
               }}
               disabled={actionLoading === stopDialog.instance?.id}

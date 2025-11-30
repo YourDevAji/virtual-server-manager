@@ -1,13 +1,27 @@
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { exec, ExecOptions as NodeExecOptions } from 'child_process'
 import { existsSync } from 'fs'
 import path from 'path'
 
-const execAsync = promisify(exec)
+// Helper to run a shell command and return stdout as string
+async function runCommand(command: string, options?: NodeExecOptions): Promise<string> {
+  return new Promise((resolve, reject) => {
+    exec(command, options ?? undefined, (err, stdout) => {
+      if (err) return reject(err)
+      try {
+        resolve(stdoutToString(stdout))
+      } catch (e) {
+        // Fallback: stringify whatever stdout is
+        resolve(String(stdout ?? ''))
+      }
+    })
+  })
+}
 
 // Helper to convert stdout to string
-function stdoutToString(output: string | Buffer): string {
-  return typeof output === 'string' ? output : output.toString('utf8')
+function stdoutToString(output: string | Buffer | unknown): string {
+  if (typeof output === 'string') return output
+  if (output instanceof Buffer) return output.toString('utf8')
+  return String(output ?? '')
 }
 
 export interface EnvironmentCheck {
@@ -32,12 +46,13 @@ export async function checkVirtualBox(): Promise<EnvironmentCheck> {
   // First, try to find VBoxManage using which/where command
   try {
     const whichCommand = isWindows ? 'where VBoxManage' : 'which VBoxManage'
-    const execOptions: any = { timeout: 5000, encoding: 'utf8' }
+    const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
     if (isWindows) {
       execOptions.shell = 'cmd.exe'
     }
-    const { stdout: whichOutput } = await execAsync(whichCommand, execOptions)
-    const outputStr = typeof whichOutput === 'string' ? whichOutput : whichOutput.toString()
+    const whichOutput = await runCommand(whichCommand, execOptions)
+    // Since runCommand returns Promise<string>, whichOutput is always a string
+    const outputStr = whichOutput
     const paths = outputStr.trim().split('\n').filter((p: string) => p.trim())
     pathLocation = paths[0] || null
     
@@ -72,30 +87,31 @@ export async function checkVirtualBox(): Promise<EnvironmentCheck> {
       const quotedPath = `"${vboxPath}"`
       const command = `${quotedPath} --version`
       
-      const execOptions: any = { timeout: 5000, encoding: 'utf8' }
+      const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
       if (isWindows) {
         execOptions.shell = 'cmd.exe'
       }
-      const { stdout: versionOutput } = await execAsync(command, execOptions)
-      version = stdoutToString(versionOutput).trim()
-      
+      const versionOutput = await runCommand(command, execOptions)
+      version = versionOutput.trim()
+
       // Success! VBoxManage is working
-      const locationInfo = pathLocation 
+      const locationInfo = pathLocation
         ? `Found in PATH at: ${pathLocation}`
         : `Found at: ${vboxPath}`
-      
+
       return {
         name: 'VirtualBox',
         status: 'ok',
         message: `VirtualBox ${version} is installed and working. ${locationInfo}`,
         fixable: false,
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Path exists but command failed - might be corrupted or wrong version
+      const errMsg = error instanceof Error ? error.message : String(error ?? 'Unknown error')
       return {
         name: 'VirtualBox',
         status: 'error',
-        message: `VBoxManage found at ${vboxPath} but failed to execute: ${error.message || 'Unknown error'}`,
+        message: `VBoxManage found at ${vboxPath} but failed to execute: ${errMsg}`,
         fixable: true,
         fixInstructions: isWindows
           ? `VBoxManage exists but cannot run. Try reinstalling VirtualBox from https://www.virtualbox.org/ or restart your terminal/IDE after installation.`
@@ -149,12 +165,13 @@ export async function checkBash(): Promise<EnvironmentCheck> {
   // First, try to find bash using which/where command
   try {
     const whichCommand = isWindows ? 'where bash' : 'which bash'
-    const execOptions: any = { timeout: 5000, encoding: 'utf8' }
+    const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
     if (isWindows) {
       execOptions.shell = 'cmd.exe'
     }
-    const { stdout: whichOutput } = await execAsync(whichCommand, execOptions)
-    const outputStr = typeof whichOutput === 'string' ? whichOutput : whichOutput.toString()
+    const whichOutput = await runCommand(whichCommand, execOptions)
+    // Since runCommand returns Promise<string>, whichOutput is always a string
+    const outputStr = whichOutput
     const paths = outputStr.trim().split('\n').filter((p: string) => p.trim())
     pathLocation = paths[0] || null
     
@@ -169,19 +186,21 @@ export async function checkBash(): Promise<EnvironmentCheck> {
     // On Unix systems, bash should be available
     if (bashPath) {
       try {
-        const { stdout: versionOutput } = await execAsync(`${bashPath} --version`, { timeout: 5000, encoding: 'utf8' })
-        version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+        const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
+        const versionOutput = await runCommand(`${bashPath} --version`, execOptions)
+        version = versionOutput.trim().split('\n')[0] || null
         return {
           name: 'Bash',
           status: 'ok',
           message: `Bash is available${version ? ` (${version})` : ''}${pathLocation ? ` at: ${pathLocation}` : ''}`,
           fixable: false,
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error ?? 'Unknown error')
         return {
           name: 'Bash',
           status: 'error',
-          message: `Bash found but failed to execute: ${error.message || 'Unknown error'}`,
+          message: `Bash found but failed to execute: ${errMsg}`,
           fixable: true,
           fixInstructions: 'Bash is corrupted. Try: sudo apt-get install --reinstall bash (Linux)',
         }
@@ -190,8 +209,9 @@ export async function checkBash(): Promise<EnvironmentCheck> {
 
     // Try default bash
     try {
-      const { stdout: versionOutput } = await execAsync('bash --version', { timeout: 5000, encoding: 'utf8' })
-      version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+      const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
+      const versionOutput = await runCommand('bash --version', execOptions)
+      version = versionOutput.trim().split('\n')[0] || null
       return {
         name: 'Bash',
         status: 'ok',
@@ -220,19 +240,21 @@ export async function checkBash(): Promise<EnvironmentCheck> {
     if (existsSync(testPath)) {
       bashPath = testPath
       try {
-        const { stdout: versionOutput } = await execAsync(`"${testPath}" --version`, { timeout: 5000, encoding: 'utf8' })
-        version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+        const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
+        const versionOutput = await runCommand(`"${testPath}" --version`, execOptions)
+        version = versionOutput.trim().split('\n')[0] || null
         return {
           name: 'Bash (Git Bash)',
           status: 'ok',
           message: `Git Bash is installed${version ? ` (${version})` : ''} at: ${testPath}`,
           fixable: false,
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error ?? 'Unknown error')
         return {
           name: 'Bash (Git Bash)',
           status: 'error',
-          message: `Git Bash found at ${testPath} but failed to execute: ${error.message || 'Unknown error'}`,
+          message: `Git Bash found at ${testPath} but failed to execute: ${errMsg}`,
           fixable: true,
           fixInstructions: 'Git Bash is corrupted. Try reinstalling from https://git-scm.com/download/win',
         }
@@ -243,19 +265,21 @@ export async function checkBash(): Promise<EnvironmentCheck> {
   // Check if bash is in PATH
   if (pathLocation) {
     try {
-      const { stdout: versionOutput } = await execAsync('bash --version', { timeout: 5000, encoding: 'utf8' })
-      version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+      const execOptions: NodeExecOptions = { timeout: 5000, encoding: 'utf8' }
+      const versionOutput = await runCommand('bash --version', execOptions)
+      version = versionOutput.trim().split('\n')[0] || null
       return {
         name: 'Bash',
         status: 'ok',
         message: `Bash is available in PATH${version ? ` (${version})` : ''} at: ${pathLocation}`,
         fixable: false,
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error ?? 'Unknown error')
       return {
         name: 'Bash',
         status: 'error',
-        message: `Bash found in PATH but failed to execute: ${error.message || 'Unknown error'}`,
+        message: `Bash found in PATH but failed to execute: ${errMsg}`,
         fixable: true,
         fixInstructions: 'Bash is corrupted. Try reinstalling Git Bash from https://git-scm.com/download/win',
       }
@@ -360,4 +384,3 @@ export function getEnvironmentStatus(checks: EnvironmentCheck[]): {
     canExecuteScripts,
   }
 }
-

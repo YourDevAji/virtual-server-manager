@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, useState } from 'react'
 
 type Theme = 'dark' | 'light' | 'system'
 
@@ -18,40 +18,40 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export function ThemeProvider({ children, defaultTheme = 'system' }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(defaultTheme)
-  const [resolvedTheme, setResolvedTheme] = useState<'dark' | 'light'>('light')
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('theme') as Theme | null
+      return stored || defaultTheme
+    }
+    return defaultTheme
+  })
 
-  useEffect(() => {
+  // Use window-aware initialization to avoid calling setState during effect
+  const [mounted] = useState<boolean>(() => typeof window !== 'undefined')
+
+  // derived resolvedTheme instead of state to avoid setState in an effect
+  const resolvedTheme = useMemo<'dark' | 'light'>(() => {
+    if (!mounted) return 'light' // fallback during SSR/hydration
+    if (theme === 'system') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }
+    return theme
+  }, [theme, mounted])
+
+  // Apply document class synchronously; rely on resolvedTheme
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return
     const root = window.document.documentElement
     root.classList.remove('light', 'dark')
+    root.classList.add(resolvedTheme)
+  }, [resolvedTheme])
 
-    if (theme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-      root.classList.add(systemTheme)
-      setResolvedTheme(systemTheme)
-    } else {
-      root.classList.add(theme)
-      setResolvedTheme(theme)
+  const setTheme = (newTheme: Theme) => {
+    setThemeState(newTheme)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('theme', newTheme)
     }
-  }, [theme])
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    const handleChange = () => {
-      if (theme === 'system') {
-        const systemTheme = mediaQuery.matches ? 'dark' : 'light'
-        const root = window.document.documentElement
-        root.classList.remove('light', 'dark')
-        root.classList.add(systemTheme)
-        setResolvedTheme(systemTheme)
-      }
-    }
-
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
-  }, [theme])
+  }
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
@@ -67,4 +67,3 @@ export function useTheme() {
   }
   return context
 }
-

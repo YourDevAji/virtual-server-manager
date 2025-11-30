@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Instance } from '@/lib/types'
@@ -12,7 +12,6 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
-import { format } from 'date-fns'
 import { toast } from 'sonner'
 
 export default function ServerProgressPage() {
@@ -25,9 +24,61 @@ export default function ServerProgressPage() {
   const [authLoading, setAuthLoading] = useState(true)
   const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string }>({ open: false, title: 'Error', message: '' })
 
+  const checkAuth = useCallback(async () => {
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser()
+      if (error || !user) {
+        router.push('/')
+        return
+      }
+      setAuthLoading(false)
+    } catch (error: unknown) {
+      console.error('Auth error:', error)
+      router.push('/')
+    }
+  }, [router])
+
+  const fetchServerDetails = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setLoading(false)
+        return
+      }
+      const response = await fetch(`/api/servers/${id}`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
+      if (response.status === 404) {
+        setInstance(null)
+        setLoading(false)
+        return
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to load server details')
+      }
+      const data = await response.json()
+      setInstance(data)
+    } catch (error: unknown) {
+      const errMsg = (error instanceof Error && error.message) ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Error Loading Server',
+        message: errMsg,
+        details: error instanceof Error ? error.stack : undefined
+      })
+      setInstance(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [id])
+
   useEffect(() => {
     checkAuth()
-  }, [])
+  }, [checkAuth])
 
   useEffect(() => {
     if (id && !authLoading) {
@@ -40,83 +91,7 @@ export default function ServerProgressPage() {
       }, 2000)
       return () => clearInterval(interval)
     }
-  }, [id, authLoading, instance])
-
-  const checkAuth = async () => {
-    try {
-      const { data: { user }, error } = await supabase.auth.getUser()
-      if (error || !user) {
-        router.push('/')
-        return
-      }
-      setAuthLoading(false)
-    } catch (error) {
-      console.error('Auth error:', error)
-      router.push('/')
-    }
-  }
-
-  const fetchServerDetails = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        setLoading(false)
-        return
-      }
-
-      // Use API route instead of direct Supabase query to avoid RLS issues
-      const response = await fetch(`/api/servers/${id}`, {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
-      })
-
-      if (response.status === 404) {
-        console.error('Server not found:', { id })
-        setInstance(null)
-        setLoading(false)
-        return
-      }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        console.error('Error fetching server details:', {
-          id,
-          status: response.status,
-          error: errorData
-        })
-        setErrorDialog({
-          open: true,
-          title: 'Error Loading Server',
-          message: errorData.error || 'Failed to load server details',
-          details: `Status: ${response.status}\n\nTry checking:\n- Your browser console for more details\n- If the server ID is correct\n- If you have permission to view this server`
-        })
-        setInstance(null)
-        setLoading(false)
-        return
-      }
-
-      const data = await response.json()
-      if (data) {
-        console.log('Server found:', { id, name: data.name, userId: data.user_id })
-        setInstance(data)
-      } else {
-        console.warn('Query succeeded but returned no data:', { id })
-        setInstance(null)
-      }
-    } catch (error: any) {
-      console.error('Error fetching server details:', error)
-      setErrorDialog({
-        open: true,
-        title: 'Error Loading Server',
-        message: error.message || 'An unexpected error occurred',
-        details: error.stack
-      })
-      setInstance(null)
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [id, authLoading, instance, fetchServerDetails])
 
   const getTimelineSteps = (): TimelineStep[] => {
     if (!instance) return []
@@ -214,7 +189,7 @@ export default function ServerProgressPage() {
             </p>
             <ul className="text-sm text-left mb-4 space-y-1 text-muted-foreground">
               <li>• The server was deleted</li>
-              <li>• You don't have permission to view this server</li>
+              <li>• You do not have permission to view this server</li>
               <li>• The server ID is incorrect</li>
             </ul>
             <div className="flex gap-2 justify-center">
@@ -311,7 +286,7 @@ export default function ServerProgressPage() {
                     </div>
                   )}
                   <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                    Click "Retry Script" above to attempt VM creation again, or check the Environment Status on the dashboard to ensure VirtualBox is properly configured.
+                    Click &quot;Retry Script&quot; above to attempt VM creation again, or check the Environment Status on the dashboard to ensure VirtualBox is properly configured.
                   </p>
                 </div>
               )}

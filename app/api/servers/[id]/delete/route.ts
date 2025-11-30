@@ -38,11 +38,13 @@ export async function POST(
     let scriptResult
     try {
       scriptResult = await executeScript('destroy_vm.sh', [instance.name])
-    } catch (scriptError: any) {
+    } catch (scriptError: unknown) {
+      const err =
+        scriptError instanceof Error ? scriptError : new Error(String(scriptError))
       scriptResult = {
         success: false,
         output: '',
-        error: scriptError.message || 'Script execution failed',
+        error: err.message || 'Script execution failed',
       }
     }
 
@@ -63,7 +65,7 @@ export async function POST(
         : 'Server record deleted (script execution may have failed)',
       scriptResult: scriptResult.success ? undefined : scriptResult.error,
     })
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error deleting server:', error)
     if (error instanceof Error && error.message.includes('Unauthorized')) {
       return NextResponse.json(
@@ -72,7 +74,7 @@ export async function POST(
       )
     }
     return NextResponse.json(
-      { error: 'Failed to delete server' },
+      { error: error instanceof Error ? error.message : 'Failed to delete server' },
       { status: 500 }
     )
   }

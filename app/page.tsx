@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -9,11 +9,26 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { ThemeToggle } from '@/components/theme-toggle'
 import Link from 'next/link'
 import { Server, Zap, Shield, Users, ArrowRight } from 'lucide-react'
+import type { User } from '@supabase/supabase-js'
 
 export default function LandingPage() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+
+  const checkUser = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
+      if (user) {
+        router.push('/dashboard')
+      }
+    } catch (error: unknown) {
+      console.error('Error checking user:', error)
+    } finally {
+      setLoading(false)
+    }
+  }, [router])
 
   useEffect(() => {
     checkUser()
@@ -27,21 +42,7 @@ export default function LandingPage() {
     })
 
     return () => subscription.unsubscribe()
-  }, [router])
-
-  const checkUser = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-      if (user) {
-        router.push('/dashboard')
-      }
-    } catch (error) {
-      console.error('Error checking user:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [checkUser, router])
 
   if (loading) {
     return (

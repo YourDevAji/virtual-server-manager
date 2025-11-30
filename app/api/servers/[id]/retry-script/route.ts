@@ -4,7 +4,7 @@ import { verifyAuth } from '@/lib/supabase/api-client'
 import { executeScript } from '@/lib/scripts/executor'
 
 // Re-export verifyAuth for consistency
-export { verifyAuth }
+// export { verifyAuth }
 
 export async function POST(
   request: NextRequest,

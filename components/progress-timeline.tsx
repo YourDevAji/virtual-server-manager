@@ -49,16 +49,14 @@ export function ProgressTimeline({ steps, className }: ProgressTimelineProps) {
 
   return (
     <div className={cn('space-y-4', className)}>
-      {steps.map((step, index) => {
-        const isLast = index === steps.length - 1
-        const isActive = step.status === 'running' || step.status === 'failed'
-        
+      {steps.map((step) => {
+        const isActiveStep = step.status === 'running' // rename from `isActive`
         return (
           <div key={step.id} className="flex gap-4">
             {/* Timeline line */}
             <div className="flex flex-col items-center">
               {getStepIcon(step.status)}
-              {!isLast && (
+              {!isActiveStep && (
                 <div
                   className={cn(
                     'w-0.5 flex-1 mt-2',

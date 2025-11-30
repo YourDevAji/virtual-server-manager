@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Instance, Service, VMUser } from '@/lib/types'
@@ -39,17 +39,7 @@ export default function ServerDetailsPage() {
   const [stopDialog, setStopDialog] = useState(false)
   const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string; actionLabel?: string; onAction?: () => void }>({ open: false, title: 'Error', message: '' })
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
-
-  useEffect(() => {
-    if (id && !authLoading) {
-      fetchServerDetails()
-    }
-  }, [id, authLoading])
-
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user }, error } = await supabase.auth.getUser()
       if (error || !user) {
@@ -57,13 +47,13 @@ export default function ServerDetailsPage() {
         return
       }
       setAuthLoading(false)
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Auth error:', error)
       router.push('/')
     }
-  }
+  }, [router])
 
-  const fetchServerDetails = async () => {
+  const fetchServerDetails = useCallback(async () => {
     try {
       // Get current user
       const { data: { user } } = await supabase.auth.getUser()
@@ -85,12 +75,22 @@ export default function ServerDetailsPage() {
       setInstance(instanceRes.data)
       setServices(servicesRes.data || [])
       setUsers(usersRes.data || [])
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error fetching server details:', error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [id])
+
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+
+  useEffect(() => {
+    if (id && !authLoading) {
+      fetchServerDetails()
+    }
+  }, [id, authLoading, fetchServerDetails])
 
   const handleAction = async (action: 'start' | 'stop' | 'delete') => {
     setActionLoading(true)

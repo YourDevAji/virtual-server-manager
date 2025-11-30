@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -23,11 +23,7 @@ export default function CreateServerPage() {
   const [authLoading, setAuthLoading] = useState(true)
   const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string }>({ open: false, title: 'Error', message: '' })
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
-
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { user }, error } = await supabase.auth.getUser()
       if (error || !user) {
@@ -35,11 +31,16 @@ export default function CreateServerPage() {
         return
       }
       setAuthLoading(false)
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Auth error:', error)
       router.push('/')
     }
-  }
+  }, [router])
+
+  useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+
   const [formData, setFormData] = useState<CreateServerData>({
     name: '',
     os: 'Ubuntu',

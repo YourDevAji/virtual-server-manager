@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { ThemeProvider } from '@/components/theme-provider'
 import { ThemeToggle } from '@/components/theme-toggle'
 import Link from 'next/link'
+import { ErrorDialog } from '@/components/error-dialog'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -19,10 +20,13 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string }>(
+    { open: false, title: 'Error', message: '' }
+  )
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    setError(null)
 
     try {
       if (isLogin) {
@@ -40,8 +44,10 @@ export default function LoginPage() {
       }
       router.push('/dashboard')
       router.refresh()
-    } catch (error: any) {
-      setError(error.message || 'An error occurred')
+    } catch (error: unknown) {
+      console.error('Auth error:', error)
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({ open: true, title: 'Auth Error', message })
     } finally {
       setLoading(false)
     }
@@ -62,64 +68,71 @@ export default function LoginPage() {
         </nav>
         <div className="container mx-auto px-4 py-8 flex items-center justify-center min-h-[calc(100vh-80px)]">
           <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{isLogin ? 'Sign In' : 'Sign Up'}</CardTitle>
-          <CardDescription>
-            {isLogin
-              ? 'Sign in to manage your virtual servers'
-              : 'Create an account to get started'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="your@email.com"
-              />
-            </div>
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
-                minLength={6}
-              />
-            </div>
-            {error && (
-              <div className="text-red-500 text-sm">{error}</div>
-            )}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Sign Up'}
-            </Button>
-            <div className="text-center text-sm">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsLogin(!isLogin)
-                  setError(null)
-                }}
-                className="text-blue-600 hover:underline"
-              >
+            <CardHeader>
+              <CardTitle>{isLogin ? 'Sign In' : 'Sign Up'}</CardTitle>
+              <CardDescription>
                 {isLogin
-                  ? "Don't have an account? Sign up"
-                  : 'Already have an account? Sign in'}
-              </button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+                  ? 'Sign in to manage your virtual servers'
+                  : 'Create an account to get started'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    placeholder="your@email.com"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    placeholder="••••••••"
+                    minLength={6}
+                  />
+                </div>
+                {error && (
+                  <div className="text-red-500 text-sm">{error}</div>
+                )}
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Sign Up'}
+                </Button>
+                <div className="text-center text-sm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLogin(!isLogin)
+                      setError(null)
+                    }}
+                    className="text-blue-600 hover:underline"
+                  >
+                    {isLogin
+                      ? "Don't have an account? Sign up"
+                      : 'Already have an account? Sign in'}
+                  </button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
         </div>
       </div>
+      <ErrorDialog
+        open={errorDialog.open}
+        onOpenChange={(open) => setErrorDialog(prev => ({ ...prev, open }))}
+        title={errorDialog.title}
+        message={errorDialog.message}
+        details={errorDialog.details}
+      />
     </ThemeProvider>
   )
 }
