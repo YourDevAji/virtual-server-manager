@@ -7,7 +7,8 @@ import { Instance, Service, VMUser } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { ErrorDialog } from '@/components/error-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -17,6 +18,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Play, Square, Trash2, Plus, ArrowLeft } from 'lucide-react'
 import { format } from 'date-fns'
 import Link from 'next/link'
+import { toast } from 'sonner'
 
 export default function ServerDetailsPage() {
   const params = useParams()
@@ -33,6 +35,9 @@ export default function ServerDetailsPage() {
   const [newService, setNewService] = useState('')
   const [newUser, setNewUser] = useState({ username: '', password: '', sudo: false })
   const [authLoading, setAuthLoading] = useState(true)
+  const [deleteDialog, setDeleteDialog] = useState(false)
+  const [stopDialog, setStopDialog] = useState(false)
+  const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string; actionLabel?: string; onAction?: () => void }>({ open: false, title: 'Error', message: '' })
 
   useEffect(() => {
     checkAuth()
@@ -94,19 +99,82 @@ export default function ServerDetailsPage() {
         method: 'POST',
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Action failed')
+        // Extract error details
+        const errorMessage = data.error || data.message || 'Action failed'
+        const errorDetails = data.error || data.message || undefined
+        
+        // If VM needs to be created, offer to create it
+        if (data.needsCreation && action === 'start') {
+          const handleCreateVM = async () => {
+            setErrorDialog(prev => ({ ...prev, open: false }))
+            // Navigate to progress page to retry script
+            router.push(`/servers/${id}/progress`)
+          }
+          
+          setErrorDialog({
+            open: true,
+            title: 'VM Not Found',
+            message: errorMessage,
+            details: errorDetails,
+            actionLabel: 'Create VM Now',
+            onAction: handleCreateVM
+          })
+          return
+        }
+        
+        // Show error dialog for critical errors
+        setErrorDialog({
+          open: true,
+          title: `Failed to ${action} server`,
+          message: errorMessage,
+          details: errorDetails
+        })
+        
+        if (action === 'stop') {
+          setStopDialog(false)
+        }
+        return
+      }
+
+      // Show success message
+      if (action === 'start') {
+        toast.success('Server started successfully', {
+          description: data.message || 'The server is now running'
+        })
+      } else if (action === 'stop') {
+        toast.success('Server stopped successfully', {
+          description: data.message || 'The server has been stopped'
+        })
+      } else if (action === 'delete') {
+        toast.success('Server deleted successfully', {
+          description: data.message || 'The server has been deleted'
+        })
       }
 
       if (action === 'delete') {
         router.push('/dashboard')
       } else {
         await fetchServerDetails()
+        setStopDialog(false)
       }
     } catch (error) {
       console.error(`Error ${action}ing server:`, error)
-      alert(`Failed to ${action} server: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      
+      // Show error dialog for critical errors
+      setErrorDialog({
+        open: true,
+        title: `Failed to ${action} server`,
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      })
+      
+      if (action === 'stop') {
+        setStopDialog(false)
+      }
     } finally {
       setActionLoading(false)
     }
@@ -132,17 +200,35 @@ export default function ServerDetailsPage() {
         body: JSON.stringify({ service: newService }),
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to install service')
+        const errorMessage = data.error || data.message || 'Failed to install service'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to install service',
+          message: errorMessage,
+          details: data.error || data.message
+        })
+        return
       }
+
+      toast.success('Service installed successfully', {
+        description: data.message || `${newService} has been installed`
+      })
 
       setInstallServiceDialog(false)
       setNewService('')
       await fetchServerDetails()
     } catch (error) {
       console.error('Error installing service:', error)
-      alert(`Failed to install service: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to install service',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      })
     } finally {
       setActionLoading(false)
     }
@@ -168,17 +254,35 @@ export default function ServerDetailsPage() {
         body: JSON.stringify(newUser),
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to add user')
+        const errorMessage = data.error || data.message || 'Failed to add user'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to add user',
+          message: errorMessage,
+          details: data.error || data.message
+        })
+        return
       }
+
+      toast.success('User created successfully', {
+        description: data.message || `User ${newUser.username} has been created`
+      })
 
       setAddUserDialog(false)
       setNewUser({ username: '', password: '', sudo: false })
       await fetchServerDetails()
     } catch (error) {
       console.error('Error adding user:', error)
-      alert(`Failed to add user: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to add user',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      })
     } finally {
       setActionLoading(false)
     }
@@ -254,7 +358,7 @@ export default function ServerDetailsPage() {
           ) : (
             <Button
               variant="outline"
-              onClick={() => handleAction('stop')}
+              onClick={() => setStopDialog(true)}
               disabled={actionLoading}
             >
               <Square className="mr-2 h-4 w-4" />
@@ -263,11 +367,7 @@ export default function ServerDetailsPage() {
           )}
           <Button
             variant="destructive"
-            onClick={() => {
-              if (confirm(`Are you sure you want to delete ${instance.name}?`)) {
-                handleAction('delete')
-              }
-            }}
+            onClick={() => setDeleteDialog(true)}
             disabled={actionLoading}
           >
             <Trash2 className="mr-2 h-4 w-4" />
@@ -516,6 +616,65 @@ export default function ServerDetailsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialog} onOpenChange={setDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Server</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{instance?.name}</strong>? This action cannot be undone and will permanently delete the server and all its data.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleAction('delete')}
+              disabled={actionLoading}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stop Confirmation Dialog */}
+      <Dialog open={stopDialog} onOpenChange={setStopDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Stop Server</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to stop <strong>{instance?.name}</strong>? The server will be shut down and will need to be started again to use it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStopDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handleAction('stop')}
+              disabled={actionLoading}
+            >
+              Stop Server
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Error Dialog */}
+      <ErrorDialog
+        open={errorDialog.open}
+        onOpenChange={(open) => setErrorDialog(prev => ({ ...prev, open }))}
+        title={errorDialog.title}
+        message={errorDialog.message}
+        details={errorDialog.details}
+        actionLabel={errorDialog.actionLabel}
+        onAction={errorDialog.onAction}
+      />
         </div>
       </div>
     </ThemeProvider>

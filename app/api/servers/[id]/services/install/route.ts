@@ -43,25 +43,36 @@ export async function POST(
       service,
     ])
 
-    if (!scriptResult.success) {
-      console.error('Script execution failed:', scriptResult.error)
-      // Continue anyway - service record will be created
-    }
-
     // Create service record in database
     const { data: serviceData, error: serviceError } = await supabase
       .from('services')
       .insert({
         instance_id: id,
         service_name: service,
-        status: 'installed',
+        status: scriptResult.success ? 'installed' : 'failed',
       })
       .select()
       .single()
 
     if (serviceError) throw serviceError
 
-    return NextResponse.json({ success: true, data: serviceData })
+    if (!scriptResult.success) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: scriptResult.error || 'Failed to install service',
+          message: scriptResult.error || 'Failed to install service',
+          data: serviceData
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      message: `${service} installed successfully`,
+      data: serviceData 
+    })
   } catch (error) {
     console.error('Error installing service:', error)
     if (error instanceof Error && error.message.includes('Unauthorized')) {

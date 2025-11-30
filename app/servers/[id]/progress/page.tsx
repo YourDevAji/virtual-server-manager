@@ -7,11 +7,13 @@ import { Instance } from '@/lib/types'
 import { ProgressTimeline, TimelineStep } from '@/components/progress-timeline'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { ErrorDialog } from '@/components/error-dialog'
 import { ThemeProvider } from '@/components/theme-provider'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { format } from 'date-fns'
+import { toast } from 'sonner'
 
 export default function ServerProgressPage() {
   const params = useParams()
@@ -21,6 +23,7 @@ export default function ServerProgressPage() {
   const [instance, setInstance] = useState<Instance | null>(null)
   const [loading, setLoading] = useState(true)
   const [authLoading, setAuthLoading] = useState(true)
+  const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string }>({ open: false, title: 'Error', message: '' })
 
   useEffect(() => {
     checkAuth()
@@ -29,11 +32,15 @@ export default function ServerProgressPage() {
   useEffect(() => {
     if (id && !authLoading) {
       fetchServerDetails()
-      // Poll for updates every 2 seconds
-      const interval = setInterval(fetchServerDetails, 2000)
+      // Only poll if we have an instance (don't poll if server not found)
+      const interval = setInterval(() => {
+        if (instance) {
+          fetchServerDetails()
+        }
+      }, 2000)
       return () => clearInterval(interval)
     }
-  }, [id, authLoading])
+  }, [id, authLoading, instance])
 
   const checkAuth = async () => {
     try {
@@ -51,20 +58,61 @@ export default function ServerProgressPage() {
 
   const fetchServerDetails = async () => {
     try {
-      const { data: { user, session } } = await supabase.auth.getUser()
-      if (!user || !session) return
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setLoading(false)
+        return
+      }
 
-      const { data, error } = await supabase
-        .from('instances')
-        .select('*')
-        .eq('id', id)
-        .eq('user_id', user.id)
-        .single()
+      // Use API route instead of direct Supabase query to avoid RLS issues
+      const response = await fetch(`/api/servers/${id}`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
 
-      if (error) throw error
-      setInstance(data)
-    } catch (error) {
+      if (response.status === 404) {
+        console.error('Server not found:', { id })
+        setInstance(null)
+        setLoading(false)
+        return
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        console.error('Error fetching server details:', {
+          id,
+          status: response.status,
+          error: errorData
+        })
+        setErrorDialog({
+          open: true,
+          title: 'Error Loading Server',
+          message: errorData.error || 'Failed to load server details',
+          details: `Status: ${response.status}\n\nTry checking:\n- Your browser console for more details\n- If the server ID is correct\n- If you have permission to view this server`
+        })
+        setInstance(null)
+        setLoading(false)
+        return
+      }
+
+      const data = await response.json()
+      if (data) {
+        console.log('Server found:', { id, name: data.name, userId: data.user_id })
+        setInstance(data)
+      } else {
+        console.warn('Query succeeded but returned no data:', { id })
+        setInstance(null)
+      }
+    } catch (error: any) {
       console.error('Error fetching server details:', error)
+      setErrorDialog({
+        open: true,
+        title: 'Error Loading Server',
+        message: error.message || 'An unexpected error occurred',
+        details: error.stack
+      })
+      setInstance(null)
     } finally {
       setLoading(false)
     }
@@ -114,19 +162,41 @@ export default function ServerProgressPage() {
         },
       })
 
-      if (response.ok) {
-        await fetchServerDetails()
+      const data = await response.json()
+
+      if (!response.ok) {
+        const errorMessage = data.error || data.message || 'Failed to retry script'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to retry script',
+          message: errorMessage,
+          details: data.error || data.message
+        })
+        return
       }
+
+      toast.success('Script retry initiated', {
+        description: 'The script execution has been restarted. This page will update automatically.'
+      })
+
+      await fetchServerDetails()
     } catch (error) {
       console.error('Error retrying script:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to retry script',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      })
     }
   }
 
-  if (authLoading || loading) {
+  if (authLoading || (loading && !instance)) {
     return (
       <ThemeProvider>
         <div className="min-h-screen flex items-center justify-center bg-background">
-          <div className="text-center">Loading...</div>
+          <div className="text-center">Loading server details...</div>
         </div>
       </ThemeProvider>
     )
@@ -136,11 +206,22 @@ export default function ServerProgressPage() {
     return (
       <ThemeProvider>
         <div className="min-h-screen flex items-center justify-center bg-background">
-          <div className="text-center">
-            <p className="mb-4">Server not found</p>
-            <Link href="/dashboard">
-              <Button>Back to Dashboard</Button>
-            </Link>
+          <div className="text-center max-w-md">
+            <p className="mb-4 text-lg font-semibold">Server not found</p>
+            <p className="mb-4 text-sm text-muted-foreground">
+              The server with ID <code className="text-xs bg-muted px-1 py-0.5 rounded">{id}</code> could not be found.
+              This might happen if:
+            </p>
+            <ul className="text-sm text-left mb-4 space-y-1 text-muted-foreground">
+              <li>• The server was deleted</li>
+              <li>• You don't have permission to view this server</li>
+              <li>• The server ID is incorrect</li>
+            </ul>
+            <div className="flex gap-2 justify-center">
+              <Link href="/dashboard">
+                <Button>Back to Dashboard</Button>
+              </Link>
+            </div>
           </div>
         </div>
       </ThemeProvider>
@@ -214,8 +295,37 @@ export default function ServerProgressPage() {
             </CardHeader>
             <CardContent>
               <ProgressTimeline steps={steps} />
+              
+              {instance.script_status === 'failed' && (
+                <div className="mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-2">
+                    <strong>VM Creation Failed</strong>
+                  </p>
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-3">
+                    The database record was created, but the VirtualBox VM was not created. 
+                    This can happen if VirtualBox is not properly configured or if there was an error during VM creation.
+                  </p>
+                  {instance.script_error && (
+                    <div className="mb-3 p-2 bg-yellow-100 dark:bg-yellow-900/40 rounded text-sm">
+                      <strong>Error:</strong> {instance.script_error}
+                    </div>
+                  )}
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                    Click "Retry Script" above to attempt VM creation again, or check the Environment Status on the dashboard to ensure VirtualBox is properly configured.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
+
+          {/* Error Dialog */}
+          <ErrorDialog
+            open={errorDialog.open}
+            onOpenChange={(open) => setErrorDialog(prev => ({ ...prev, open }))}
+            title={errorDialog.title}
+            message={errorDialog.message}
+            details={errorDialog.details}
+          />
         </div>
       </div>
     </ThemeProvider>

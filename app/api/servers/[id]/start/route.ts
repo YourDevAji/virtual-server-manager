@@ -16,7 +16,7 @@ export async function POST(
     // Get instance (verify ownership)
     const { data: instance, error: instanceError } = await supabase
       .from('instances')
-      .select('name, user_id')
+      .select('name, os, cpu, ram, storage, user_id, script_status')
       .eq('id', id)
       .eq('user_id', user.id)
       .single()
@@ -25,6 +25,21 @@ export async function POST(
       return NextResponse.json(
         { error: 'Instance not found' },
         { status: 404 }
+      )
+    }
+
+    // Check if VM was actually created (script_status should be 'completed')
+    // If not, the VM doesn't exist in VirtualBox yet
+    if (instance.script_status !== 'completed') {
+      return NextResponse.json(
+        { 
+          success: false,
+          error: 'VM does not exist in VirtualBox',
+          message: `The server record exists but the VM was not created. Script status: ${instance.script_status || 'pending'}. Please retry the VM creation script first.`,
+          needsCreation: true,
+          scriptStatus: instance.script_status
+        },
+        { status: 400 }
       )
     }
 
@@ -47,7 +62,21 @@ export async function POST(
       })
       .eq('id', id)
 
-    return NextResponse.json({ success: true, message: scriptResult.output })
+    if (!scriptResult.success) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: scriptResult.error || 'Failed to start server',
+          message: scriptResult.error || 'Failed to start server'
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      message: scriptResult.output || 'Server started successfully' 
+    })
   } catch (error) {
     console.error('Error starting server:', error)
     if (error instanceof Error && error.message.includes('Unauthorized')) {

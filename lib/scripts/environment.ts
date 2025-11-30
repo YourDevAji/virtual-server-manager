@@ -5,6 +5,11 @@ import path from 'path'
 
 const execAsync = promisify(exec)
 
+// Helper to convert stdout to string
+function stdoutToString(output: string | Buffer): string {
+  return typeof output === 'string' ? output : output.toString('utf8')
+}
+
 export interface EnvironmentCheck {
   name: string
   status: 'ok' | 'warning' | 'error'
@@ -20,52 +25,114 @@ export interface EnvironmentCheck {
 export async function checkVirtualBox(): Promise<EnvironmentCheck> {
   const isWindows = process.platform === 'win32'
   
-  // Common VirtualBox paths
-  const vboxPaths = isWindows
-    ? [
-        'C:\\Program Files\\Oracle\\VirtualBox\\VBoxManage.exe',
-        'C:\\Program Files (x86)\\Oracle\\VirtualBox\\VBoxManage.exe',
-      ]
-    : ['/usr/bin/VBoxManage', '/usr/local/bin/VBoxManage']
+  let vboxPath: string | null = null
+  let version: string | null = null
+  let pathLocation: string | null = null
 
-  // Check if VBoxManage exists in common locations
-  for (const vboxPath of vboxPaths) {
-    if (existsSync(vboxPath)) {
-      try {
-        await execAsync(`"${vboxPath}" --version`, { timeout: 5000 })
-        return {
-          name: 'VirtualBox',
-          status: 'ok',
-          message: 'VirtualBox is installed and accessible',
-          fixable: false,
-        }
-      } catch {
-        // Path exists but command failed
+  // First, try to find VBoxManage using which/where command
+  try {
+    const whichCommand = isWindows ? 'where VBoxManage' : 'which VBoxManage'
+    const execOptions: any = { timeout: 5000, encoding: 'utf8' }
+    if (isWindows) {
+      execOptions.shell = 'cmd.exe'
+    }
+    const { stdout: whichOutput } = await execAsync(whichCommand, execOptions)
+    const outputStr = typeof whichOutput === 'string' ? whichOutput : whichOutput.toString()
+    const paths = outputStr.trim().split('\n').filter((p: string) => p.trim())
+    pathLocation = paths[0] || null
+    
+    if (pathLocation) {
+      vboxPath = pathLocation.trim()
+    }
+  } catch {
+    // Not in PATH, continue to check common locations
+  }
+
+  // If not found in PATH, check common installation paths
+  if (!vboxPath) {
+    const commonPaths = isWindows
+      ? [
+          'C:\\Program Files\\Oracle\\VirtualBox\\VBoxManage.exe',
+          'C:\\Program Files (x86)\\Oracle\\VirtualBox\\VBoxManage.exe',
+        ]
+      : ['/usr/bin/VBoxManage', '/usr/local/bin/VBoxManage', '/opt/VirtualBox/VBoxManage']
+
+    for (const testPath of commonPaths) {
+      if (existsSync(testPath)) {
+        vboxPath = testPath
+        break
       }
     }
   }
 
-  // Try if it's in PATH
-  try {
-    await execAsync('VBoxManage --version', { timeout: 5000 })
-    return {
-      name: 'VirtualBox',
-      status: 'ok',
-      message: 'VirtualBox is installed and accessible',
-      fixable: false,
+  // If we found a path, try to execute it
+  if (vboxPath) {
+    try {
+      // Always quote the path to handle spaces, especially on Windows
+      const quotedPath = `"${vboxPath}"`
+      const command = `${quotedPath} --version`
+      
+      const execOptions: any = { timeout: 5000, encoding: 'utf8' }
+      if (isWindows) {
+        execOptions.shell = 'cmd.exe'
+      }
+      const { stdout: versionOutput } = await execAsync(command, execOptions)
+      version = stdoutToString(versionOutput).trim()
+      
+      // Success! VBoxManage is working
+      const locationInfo = pathLocation 
+        ? `Found in PATH at: ${pathLocation}`
+        : `Found at: ${vboxPath}`
+      
+      return {
+        name: 'VirtualBox',
+        status: 'ok',
+        message: `VirtualBox ${version} is installed and working. ${locationInfo}`,
+        fixable: false,
+      }
+    } catch (error: any) {
+      // Path exists but command failed - might be corrupted or wrong version
+      return {
+        name: 'VirtualBox',
+        status: 'error',
+        message: `VBoxManage found at ${vboxPath} but failed to execute: ${error.message || 'Unknown error'}`,
+        fixable: true,
+        fixInstructions: isWindows
+          ? `VBoxManage exists but cannot run. Try reinstalling VirtualBox from https://www.virtualbox.org/ or restart your terminal/IDE after installation.`
+          : `VBoxManage exists but cannot run. Try: sudo apt-get install --reinstall virtualbox (Ubuntu/Debian) or brew reinstall virtualbox (macOS)`,
+      }
     }
-  } catch {
-    // Not in PATH either
   }
+
+  // Not found anywhere - provide detailed instructions
+  const instructions = isWindows
+    ? `VirtualBox is not installed or not in PATH.
+
+1. Download and install VirtualBox from https://www.virtualbox.org/wiki/Downloads
+2. During installation, ensure "Add to PATH" is checked
+3. If already installed, add to PATH manually:
+   - Open System Properties > Environment Variables
+   - Add to PATH: C:\\Program Files\\Oracle\\VirtualBox
+   - Restart your terminal/IDE after adding to PATH
+4. Click the "Refresh" button above to re-check after installation
+5. Verify by running in a new terminal: VBoxManage --version`
+    : `VirtualBox is not installed or not in PATH.
+
+1. Install VirtualBox:
+   - Ubuntu/Debian: sudo apt-get install virtualbox
+   - macOS: brew install virtualbox
+   - Or download from https://www.virtualbox.org/wiki/Downloads
+2. If installed but not in PATH, add it to your shell profile:
+   - Add to ~/.bashrc or ~/.zshrc: export PATH=$PATH:/usr/bin
+3. Click the "Refresh" button above to re-check after installation
+4. Verify by running: VBoxManage --version`
 
   return {
     name: 'VirtualBox',
     status: 'error',
-    message: 'VirtualBox is not installed or VBoxManage is not in PATH',
+    message: 'VirtualBox is not installed or VBoxManage is not accessible in PATH',
     fixable: true,
-    fixInstructions: isWindows
-      ? 'Install VirtualBox from https://www.virtualbox.org/ and add it to PATH: C:\\Program Files\\Oracle\\VirtualBox'
-      : 'Install VirtualBox: sudo apt-get install virtualbox (Ubuntu/Debian) or brew install virtualbox (macOS)',
+    fixInstructions: instructions,
   }
 }
 
@@ -75,14 +142,60 @@ export async function checkVirtualBox(): Promise<EnvironmentCheck> {
 export async function checkBash(): Promise<EnvironmentCheck> {
   const isWindows = process.platform === 'win32'
   
+  let bashPath: string | null = null
+  let version: string | null = null
+  let pathLocation: string | null = null
+
+  // First, try to find bash using which/where command
+  try {
+    const whichCommand = isWindows ? 'where bash' : 'which bash'
+    const execOptions: any = { timeout: 5000, encoding: 'utf8' }
+    if (isWindows) {
+      execOptions.shell = 'cmd.exe'
+    }
+    const { stdout: whichOutput } = await execAsync(whichCommand, execOptions)
+    const outputStr = typeof whichOutput === 'string' ? whichOutput : whichOutput.toString()
+    const paths = outputStr.trim().split('\n').filter((p: string) => p.trim())
+    pathLocation = paths[0] || null
+    
+    if (pathLocation) {
+      bashPath = pathLocation.trim()
+    }
+  } catch {
+    // Not in PATH, continue to check common locations
+  }
+
   if (!isWindows) {
     // On Unix systems, bash should be available
+    if (bashPath) {
+      try {
+        const { stdout: versionOutput } = await execAsync(`${bashPath} --version`, { timeout: 5000, encoding: 'utf8' })
+        version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+        return {
+          name: 'Bash',
+          status: 'ok',
+          message: `Bash is available${version ? ` (${version})` : ''}${pathLocation ? ` at: ${pathLocation}` : ''}`,
+          fixable: false,
+        }
+      } catch (error: any) {
+        return {
+          name: 'Bash',
+          status: 'error',
+          message: `Bash found but failed to execute: ${error.message || 'Unknown error'}`,
+          fixable: true,
+          fixInstructions: 'Bash is corrupted. Try: sudo apt-get install --reinstall bash (Linux)',
+        }
+      }
+    }
+
+    // Try default bash
     try {
-      await execAsync('bash --version', { timeout: 5000 })
+      const { stdout: versionOutput } = await execAsync('bash --version', { timeout: 5000, encoding: 'utf8' })
+      version = stdoutToString(versionOutput).trim().split('\n')[0] || null
       return {
         name: 'Bash',
         status: 'ok',
-        message: 'Bash is available',
+        message: `Bash is available${version ? ` (${version})` : ''}`,
         fixable: false,
       }
     } catch {
@@ -96,35 +209,57 @@ export async function checkBash(): Promise<EnvironmentCheck> {
     }
   }
 
-  // Windows: Check for Git Bash
+  // Windows: Check for Git Bash in common locations
   const gitBashPaths = [
     'C:\\Program Files\\Git\\bin\\bash.exe',
     'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
     'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
   ]
 
-  for (const bashPath of gitBashPaths) {
-    if (existsSync(bashPath)) {
-      return {
-        name: 'Bash (Git Bash)',
-        status: 'ok',
-        message: 'Git Bash is installed',
-        fixable: false,
+  for (const testPath of gitBashPaths) {
+    if (existsSync(testPath)) {
+      bashPath = testPath
+      try {
+        const { stdout: versionOutput } = await execAsync(`"${testPath}" --version`, { timeout: 5000, encoding: 'utf8' })
+        version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+        return {
+          name: 'Bash (Git Bash)',
+          status: 'ok',
+          message: `Git Bash is installed${version ? ` (${version})` : ''} at: ${testPath}`,
+          fixable: false,
+        }
+      } catch (error: any) {
+        return {
+          name: 'Bash (Git Bash)',
+          status: 'error',
+          message: `Git Bash found at ${testPath} but failed to execute: ${error.message || 'Unknown error'}`,
+          fixable: true,
+          fixInstructions: 'Git Bash is corrupted. Try reinstalling from https://git-scm.com/download/win',
+        }
       }
     }
   }
 
   // Check if bash is in PATH
-  try {
-    await execAsync('bash --version', { timeout: 5000 })
-    return {
-      name: 'Bash',
-      status: 'ok',
-      message: 'Bash is available in PATH',
-      fixable: false,
+  if (pathLocation) {
+    try {
+      const { stdout: versionOutput } = await execAsync('bash --version', { timeout: 5000, encoding: 'utf8' })
+      version = stdoutToString(versionOutput).trim().split('\n')[0] || null
+      return {
+        name: 'Bash',
+        status: 'ok',
+        message: `Bash is available in PATH${version ? ` (${version})` : ''} at: ${pathLocation}`,
+        fixable: false,
+      }
+    } catch (error: any) {
+      return {
+        name: 'Bash',
+        status: 'error',
+        message: `Bash found in PATH but failed to execute: ${error.message || 'Unknown error'}`,
+        fixable: true,
+        fixInstructions: 'Bash is corrupted. Try reinstalling Git Bash from https://git-scm.com/download/win',
+      }
     }
-  } catch {
-    // Not found
   }
 
   return {
@@ -132,7 +267,14 @@ export async function checkBash(): Promise<EnvironmentCheck> {
     status: 'warning',
     message: 'Bash not found. Scripts will be simulated.',
     fixable: true,
-    fixInstructions: 'Install Git Bash from https://git-scm.com/download/win and add it to PATH, or install WSL',
+    fixInstructions: `Install Git Bash from https://git-scm.com/download/win
+
+During installation:
+1. Select "Git from the command line and also from 3rd-party software"
+2. Add Git Bash to PATH
+3. Restart your terminal/IDE after installation
+4. Click the "Refresh" button above to re-check after installation
+5. Verify by running in a new terminal: bash --version`,
   }
 }
 

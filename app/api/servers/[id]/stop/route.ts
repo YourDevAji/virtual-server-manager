@@ -54,7 +54,21 @@ export async function POST(
       })
       .eq('id', id)
 
-    return NextResponse.json({ success: true, message: scriptResult.output })
+    if (!scriptResult.success) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: scriptResult.error || 'Failed to stop server',
+          message: scriptResult.error || 'Failed to stop server'
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      message: scriptResult.output || 'Server stopped successfully' 
+    })
   } catch (error) {
     console.error('Error stopping server:', error)
     if (error instanceof Error && error.message.includes('Unauthorized')) {

@@ -56,10 +56,22 @@ export async function POST(
       })
       .eq('id', id)
 
+    if (!scriptResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: scriptResult.error || 'Script execution failed',
+          message: scriptResult.error || 'Script execution failed',
+          scriptStatus,
+        },
+        { status: 500 }
+      )
+    }
+
     return NextResponse.json({
       success: true,
+      message: 'Script execution completed successfully',
       scriptStatus,
-      error: scriptResult.error,
     })
   } catch (error) {
     console.error('Error retrying script:', error)

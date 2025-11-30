@@ -102,18 +102,35 @@ export async function executeScript(
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer
     })
 
-    // On Windows, stderr might contain warnings that are not errors
-    if (stderr && !stderr.includes('WARNING') && !stderr.includes('warning')) {
-      // Check if it's actually an error or just informational
-      const isError = !stderr.toLowerCase().includes('info') && 
-                      !stderr.toLowerCase().includes('note')
+    // Check stderr for errors (scripts output errors to stderr)
+    if (stderr) {
+      // Check if stderr contains error markers from our scripts
+      const hasError = stderr.includes('[ERROR]') || 
+                       stderr.toLowerCase().includes('error') ||
+                       stderr.toLowerCase().includes('failed')
       
-      if (isError) {
-        console.error(`Script error: ${stderr}`)
+      // Filter out warnings and info messages
+      const isWarning = stderr.includes('[WARNING]') || 
+                        stderr.toLowerCase().includes('warning')
+      const isInfo = stderr.toLowerCase().includes('info') || 
+                     stderr.toLowerCase().includes('note')
+      
+      if (hasError && !isWarning && !isInfo) {
+        // Extract error message (remove ANSI codes and get the actual error)
+        const errorLines = stderr.split('\n')
+          .filter(line => line.includes('[ERROR]') || line.toLowerCase().includes('error'))
+          .map(line => line.replace(/\x1b\[[0-9;]*m/g, '').trim())
+          .filter(line => line.length > 0)
+        
+        const errorMessage = errorLines.length > 0 
+          ? errorLines.join('. ') 
+          : stderr.replace(/\x1b\[[0-9;]*m/g, '').trim()
+        
+        console.error(`Script error: ${errorMessage}`)
         return {
           success: false,
-          output: stdout,
-          error: stderr,
+          output: stdout || '',
+          error: errorMessage,
         }
       }
     }
@@ -128,12 +145,27 @@ export async function executeScript(
     console.error(`Stdout: ${error.stdout || 'none'}`)
     console.error(`Stderr: ${error.stderr || 'none'}`)
     
+    // Extract error message from stderr if available
+    let errorMessage = error.message || 'Unknown error'
+    if (error.stderr) {
+      const errorLines = error.stderr.split('\n')
+        .filter(line => line.includes('[ERROR]') || line.toLowerCase().includes('error'))
+        .map(line => line.replace(/\x1b\[[0-9;]*m/g, '').trim())
+        .filter(line => line.length > 0)
+      
+      if (errorLines.length > 0) {
+        errorMessage = errorLines.join('. ')
+      } else {
+        // Use the full stderr if no specific error line found
+        errorMessage = error.stderr.replace(/\x1b\[[0-9;]*m/g, '').trim() || errorMessage
+      }
+    }
+    
     // Return failure but with detailed error message
-    // The API route will handle this gracefully and still create the database record
     return {
       success: false,
       output: error.stdout || '',
-      error: error.message || 'Unknown error',
+      error: errorMessage,
     }
   }
 }

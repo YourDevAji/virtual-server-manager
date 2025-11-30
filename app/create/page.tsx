@@ -9,16 +9,19 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { ErrorDialog } from '@/components/error-dialog'
 import { ThemeProvider } from '@/components/theme-provider'
 import { ThemeToggle } from '@/components/theme-toggle'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import { CreateServerData } from '@/lib/types'
+import { toast } from 'sonner'
 
 export default function CreateServerPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [authLoading, setAuthLoading] = useState(true)
+  const [errorDialog, setErrorDialog] = useState<{ open: boolean; title: string; message: string; details?: string }>({ open: false, title: 'Error', message: '' })
 
   useEffect(() => {
     checkAuth()
@@ -68,12 +71,23 @@ export default function CreateServerPage() {
         body: JSON.stringify(formData),
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to create server')
+        const errorMessage = data.error || data.message || 'Failed to create server'
+        setErrorDialog({
+          open: true,
+          title: 'Failed to create server',
+          message: errorMessage,
+          details: data.error || data.message
+        })
+        return
       }
 
-      const data = await response.json()
+      toast.success('Server creation started', {
+        description: 'Your server is being created. You will be redirected to the progress page.'
+      })
+
       // If script failed, redirect to progress page, otherwise to dashboard
       if (data.redirectTo) {
         router.push(data.redirectTo)
@@ -82,7 +96,13 @@ export default function CreateServerPage() {
       }
     } catch (error) {
       console.error('Error creating server:', error)
-      alert(`Failed to create server: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setErrorDialog({
+        open: true,
+        title: 'Failed to create server',
+        message: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      })
     } finally {
       setLoading(false)
     }
@@ -319,6 +339,15 @@ export default function CreateServerPage() {
           </Button>
         </div>
       </form>
+
+      {/* Error Dialog */}
+      <ErrorDialog
+        open={errorDialog.open}
+        onOpenChange={(open) => setErrorDialog(prev => ({ ...prev, open }))}
+        title={errorDialog.title}
+        message={errorDialog.message}
+        details={errorDialog.details}
+      />
         </div>
       </div>
     </ThemeProvider>

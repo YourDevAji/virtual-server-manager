@@ -45,11 +45,6 @@ export async function POST(
       sudo ? 'true' : 'false',
     ])
 
-    if (!scriptResult.success) {
-      console.error('Script execution failed:', scriptResult.error)
-      // Continue anyway - user record will be created
-    }
-
     // Create user record in database
     const { data: userData, error: userError } = await supabase
       .from('vm_users')
@@ -63,7 +58,23 @@ export async function POST(
 
     if (userError) throw userError
 
-    return NextResponse.json({ success: true, data: userData })
+    if (!scriptResult.success) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: scriptResult.error || 'Failed to create user',
+          message: scriptResult.error || 'Failed to create user',
+          data: userData
+        },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      message: `User ${username} created successfully`,
+      data: userData 
+    })
   } catch (error) {
     console.error('Error adding user:', error)
     if (error instanceof Error && error.message.includes('Unauthorized')) {

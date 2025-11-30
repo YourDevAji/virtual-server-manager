@@ -25,11 +25,47 @@ warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-# Check if VBoxManage is available
-if ! command -v VBoxManage &> /dev/null; then
+# Find VBoxManage - handle paths with spaces
+find_vboxmanage() {
+    # First try command -v (works if in PATH)
+    if command -v VBoxManage &> /dev/null; then
+        VBOXMANAGE=$(command -v VBoxManage)
+        echo "$VBOXMANAGE"
+        return 0
+    fi
+    
+    # Check common Windows paths (when running in Git Bash on Windows)
+    if [ -f "/c/Program Files/Oracle/VirtualBox/VBoxManage.exe" ]; then
+        echo "/c/Program Files/Oracle/VirtualBox/VBoxManage.exe"
+        return 0
+    fi
+    if [ -f "/c/Program Files (x86)/Oracle/VirtualBox/VBoxManage.exe" ]; then
+        echo "/c/Program Files (x86)/Oracle/VirtualBox/VBoxManage.exe"
+        return 0
+    fi
+    
+    # Check Unix paths
+    if [ -f "/usr/bin/VBoxManage" ]; then
+        echo "/usr/bin/VBoxManage"
+        return 0
+    fi
+    if [ -f "/usr/local/bin/VBoxManage" ]; then
+        echo "/usr/local/bin/VBoxManage"
+        return 0
+    fi
+    
+    return 1
+}
+
+# Find and set VBoxManage path
+VBOXMANAGE_PATH=$(find_vboxmanage)
+if [ -z "$VBOXMANAGE_PATH" ]; then
     error "VBoxManage is not installed or not in PATH"
     exit 1
 fi
+
+# Always quote the path to handle spaces
+VBOXMANAGE="\"$VBOXMANAGE_PATH\""
 
 # Parse arguments
 VM_NAME="$1"
@@ -44,13 +80,13 @@ if [ -z "$VM_NAME" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
 fi
 
 # Check if VM exists
-if ! VBoxManage showvminfo "$VM_NAME" &> /dev/null; then
+if ! eval "$VBOXMANAGE showvminfo \"$VM_NAME\"" &> /dev/null; then
     error "VM '$VM_NAME' does not exist"
     exit 1
 fi
 
 # Check if VM is running
-VM_STATE=$(VBoxManage showvminfo "$VM_NAME" --machinereadable | grep "VMState=" | cut -d'"' -f2)
+VM_STATE=$(eval "$VBOXMANAGE showvminfo \"$VM_NAME\" --machinereadable" | grep "VMState=" | cut -d'"' -f2)
 if [ "$VM_STATE" != "running" ]; then
     error "VM '$VM_NAME' is not running (current state: $VM_STATE)"
     error "Please start the VM first"
@@ -60,7 +96,7 @@ fi
 log "Creating user '$USERNAME' on VM '$VM_NAME'..."
 
 # Get VM IP address (if available)
-VM_IP=$(VBoxManage guestproperty get "$VM_NAME" "/VirtualBox/GuestInfo/Net/0/V4/IP" 2>/dev/null | awk '{print $2}')
+VM_IP=$(eval "$VBOXMANAGE guestproperty get \"$VM_NAME\" \"/VirtualBox/GuestInfo/Net/0/V4/IP\"" 2>/dev/null | awk '{print $2}')
 
 if [ -z "$VM_IP" ] || [ "$VM_IP" == "value" ]; then
     warning "Could not determine VM IP address"
